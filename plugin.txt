@@ -1,0 +1,16 @@
+# Set VARIABLEs here to allow variation in your plugin
+VARIABLE migration_enabled false
+VARIABLE migration_batch_size 1000
+VARIABLE migration_sleep_seconds 0.5
+VARIABLE migration_files_before_pause 10
+VARIABLE migration_pause_seconds 30.0
+VARIABLE migration_initial_delay 60
+
+MICROSERVICE TSDB_MIGRATION tsdb-migration-microservice
+  CMD python tsdb_migration.py
+  OPTION ENABLED <%= migration_enabled %>
+  OPTION BATCH_SIZE <%= migration_batch_size %>
+  OPTION SLEEP_SECONDS <%= migration_sleep_seconds %>
+  OPTION FILES_BEFORE_PAUSE <%= migration_files_before_pause %>
+  OPTION PAUSE_SECONDS <%= migration_pause_seconds %>
+  OPTION INITIAL_DELAY <%= migration_initial_delay %>
