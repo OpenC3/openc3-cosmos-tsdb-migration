@@ -1,15 +1,15 @@
 # OpenC3 COSMOS Migration Microservice
 
-A Python microservice for migrating historical COSMOS decommutated telemetry data from bin files into QuestDB time-series database.
+A Python microservice for migrating historical COSMOS decommutated telemetry and command data from bin files into QuestDB time-series database.
 
 ## Overview
 
-This microservice reads COSMOS5 binary packet log files (decom_logs) from S3-compatible storage and ingests the decommutated telemetry data into QuestDB for historical analysis and trending.
+This microservice reads COSMOS5 binary packet log files (decom_logs) from S3-compatible storage and ingests the decommutated telemetry and command data into QuestDB for historical analysis and trending.
 
 ### Key Features
 
 - Parses COSMOS5 binary packet log format (`.bin` and `.bin.gz` files)
-- Extracts JSON-encoded decommutated telemetry from packet logs
+- Extracts JSON-encoded decommutated telemetry and commands from packet logs
 - Ingests data into QuestDB via ILP HTTP protocol
 - Processes files in reverse chronological order (newest first)
 - Tracks progress in Redis for resume capability
@@ -21,11 +21,12 @@ This microservice reads COSMOS5 binary packet log files (decom_logs) from S3-com
 S3/MinIO Logs Bucket          Migration Microservice              QuestDB
 ┌─────────────────────┐       ┌─────────────────────────┐       ┌──────────────┐
 │ {scope}/decom_logs/ │       │                         │       │              │
-│   ├── tlm/          │──────>│  1. List files (desc)   │       │              │
-│   │   ├── INST/     │       │  2. Download .bin.gz    │       │  TARGET__    │
-│   │   └── ...       │       │  3. Decompress          │──────>│  PACKET_NAME │
-│   └── cmd/          │       │  4. Parse JSON packets  │       │  tables      │
-│                     │       │  5. Batch ingest        │       │              │
+│   ├── tlm/          │──────>│  1. List files (desc)   │       │ TLM__TARGET  │
+│   │   ├── INST/     │       │  2. Download .bin.gz    │       │ __PACKET     │
+│   │   └── ...       │       │  3. Decompress          │──────>│              │
+│   └── cmd/          │       │  4. Parse JSON packets  │       │ CMD__TARGET  │
+│       ├── INST/     │       │  5. Batch ingest        │       │ __PACKET     │
+│       └── ...       │       │                         │       │              │
 └─────────────────────┘       └─────────────────────────┘       └──────────────┘
 ```
 
@@ -44,14 +45,26 @@ S3/MinIO Logs Bucket          Migration Microservice              QuestDB
 | STRING | var | varchar | Variable-length text |
 | BLOCK | var | varchar | Base64-encoded binary |
 | BOOL | N/A | boolean | Native boolean |
-| ARRAY | var | double[] | Numeric arrays; else JSON |
+| ARRAY | var | varchar | JSON-serialized arrays |
 | OBJECT | var | varchar | JSON-serialized |
 | ANY | var | varchar | JSON-serialized |
 
-### Important Limitations
+### Special Float Value Handling
 
-- QuestDB does NOT support IEEE 754 special values (`Infinity`, `-Infinity`, `NaN`) - these become `NULL`
+QuestDB does not support IEEE 754 special values directly. The following sentinel values are used:
+
+| Special Value | Sentinel Value |
+|---------------|----------------|
+| `Infinity` | `1.7976931348623157e+308` (near `DBL_MAX`) |
+| `-Infinity` | `-1.7976931348623157e+308` (near `-DBL_MAX`) |
+| `NaN` | `1.7976931348623156e+308` (near `DBL_MAX`, slightly less) |
+
+These sentinels allow special float values to be stored and retrieved without data loss.
+
+### Other Limitations
+
 - Integer `MIN_VALUE` is used as NULL sentinel in QuestDB
+- Arrays are always stored as JSON-serialized strings for consistency
 
 ## Prerequisites
 

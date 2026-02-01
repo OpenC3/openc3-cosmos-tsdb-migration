@@ -18,9 +18,12 @@
 Migration microservice for ingesting historical bin file data into QuestDB.
 
 This microservice:
-- Pulls decom_logs bin files from S3-compatible storage
+- Pulls decom_logs bin files from S3-compatible storage (both telemetry and commands)
 - Parses COSMOS5 binary format
 - Ingests data into QuestDB with schema protection
+- Uses TLM__ and CMD__ prefixes for table names
+- Stores arrays as JSON-serialized strings
+- Handles special float values (+/-Infinity, NaN) via sentinel values
 - Processes files in reverse chronological order (newest first)
 - Moves processed files to a processed/ folder
 - Tracks progress in Redis for resume capability
@@ -87,7 +90,8 @@ class TsdbMigration(Microservice):
 
         # Valid targets/packets (current system definitions)
         self.valid_targets = set()
-        self.valid_packets = {}  # {target_name: set(packet_names)}
+        self.valid_tlm_packets = {}  # {target_name: set(packet_names)}
+        self.valid_cmd_packets = {}  # {target_name: set(packet_names)}
 
         # Statistics
         self.files_processed = 0
@@ -99,23 +103,38 @@ class TsdbMigration(Microservice):
         self.progress_key = f"OPENC3__{self.scope}__MIGRATION__PROGRESS"
 
     def _load_valid_targets_packets(self):
-        """Load current target/packet definitions from the system."""
+        """Load current target/packet definitions from the system (both telemetry and commands)."""
         try:
             self.valid_targets = set(get_target_names(scope=self.scope))
-            self.valid_packets = {}
-            for target in self.valid_targets:
-                try:
-                    self.valid_packets[target] = set(get_all_tlm_names(target, scope=self.scope))
-                except Exception:
-                    self.valid_packets[target] = set()
+            self.valid_tlm_packets = {}
+            self.valid_cmd_packets = {}
 
+            for target in self.valid_targets:
+                # Load telemetry packets
+                try:
+                    self.valid_tlm_packets[target] = set(get_all_tlm_names(target, scope=self.scope))
+                except Exception:
+                    self.valid_tlm_packets[target] = set()
+
+                # Load command packets
+                try:
+                    self.valid_cmd_packets[target] = set(get_all_cmd_names(target, scope=self.scope))
+                except Exception:
+                    self.valid_cmd_packets[target] = set()
+
+            total_tlm = sum(len(p) for p in self.valid_tlm_packets.values())
+            total_cmd = sum(len(p) for p in self.valid_cmd_packets.values())
             self.logger.info(
                 f"Loaded {len(self.valid_targets)} targets with "
-                f"{sum(len(p) for p in self.valid_packets.values())} total packets"
+                f"{total_tlm} telemetry packets and {total_cmd} command packets"
             )
         except Exception as e:
             self.logger.error(f"Failed to load target/packet definitions: {e}")
             raise
+
+    def _is_command_file(self, file_path: str) -> bool:
+        """Determine if a file is from the command logs (vs telemetry)."""
+        return "/decom_logs/cmd/" in file_path
 
     def _should_process_file(self, filename: str) -> bool:
         """Check if a file should be processed based on current system definitions."""
@@ -128,7 +147,13 @@ class TsdbMigration(Microservice):
             self.logger.debug(f"Skipping obsolete target: {target_name}")
             return False
 
-        if packet_name not in self.valid_packets.get(target_name, set()):
+        # Check the appropriate packet set based on cmd vs tlm
+        if self._is_command_file(filename):
+            valid_packets = self.valid_cmd_packets.get(target_name, set())
+        else:
+            valid_packets = self.valid_tlm_packets.get(target_name, set())
+
+        if packet_name not in valid_packets:
             self.logger.debug(f"Skipping obsolete packet: {target_name}/{packet_name}")
             return False
 
@@ -236,6 +261,10 @@ class TsdbMigration(Microservice):
         """
         packets_in_file = 0
 
+        # Determine if this is a command or telemetry file
+        is_command = self._is_command_file(file_path)
+        cmd_or_tlm = "CMD" if is_command else "TLM"
+
         try:
             # Download and decompress file
             data = self._download_file(file_path)
@@ -246,8 +275,10 @@ class TsdbMigration(Microservice):
                 if self.cancel_thread:
                     break
 
-                # Get table name
-                table_name, _ = QuestDBClient.sanitize_table_name(packet.target_name, packet.packet_name)
+                # Get table name with appropriate prefix (CMD__ or TLM__)
+                table_name, _ = QuestDBClient.sanitize_table_name(
+                    packet.target_name, packet.packet_name, cmd_or_tlm=cmd_or_tlm
+                )
 
                 # Convert JSON data to QuestDB columns
                 columns = self.questdb.process_json_data(packet.json_hash)
