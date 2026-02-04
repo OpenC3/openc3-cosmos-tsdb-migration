@@ -145,7 +145,7 @@ def parse_target_packet_from_filename(filename: str) -> tuple:
     """
     Extract target and packet names from a decom log filename.
 
-    Filename pattern: {timestamp}__{TARGET}__{PACKET}__rt__decom.bin.gz
+    Filename pattern: {start_time}__{end_time}__{scope}__{target}__{packet}__{mode}__decom.bin.gz
 
     Args:
         filename: The filename to parse
@@ -155,6 +155,7 @@ def parse_target_packet_from_filename(filename: str) -> tuple:
     """
     basename = os.path.basename(filename)
     parts = basename.split("__")
-    if len(parts) >= 3:
-        return parts[1], parts[2]
+    # parts[0]=start_time, [1]=end_time, [2]=scope, [3]=target, [4]=packet, [5]=mode
+    if len(parts) >= 5:
+        return parts[3], parts[4]
     return None, None
