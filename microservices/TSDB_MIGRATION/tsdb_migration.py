@@ -20,7 +20,7 @@ Migration microservice for ingesting historical bin file data into QuestDB.
 This microservice:
 - Pulls decom_logs bin files from S3-compatible storage (both telemetry and commands)
 - Parses COSMOS5 binary format
-- Ingests data into QuestDB with schema protection
+- Ingests data into QuestDB with type casting based on existing column types
 - Uses TLM__ and CMD__ prefixes for table names
 - Stores arrays as JSON-serialized strings
 - Handles special float values (+/-Infinity, NaN) via sentinel values
@@ -35,6 +35,7 @@ import os
 import traceback
 from datetime import datetime, timezone
 
+from questdb.ingress import IngressError
 from openc3.microservices.microservice import Microservice
 from openc3.utilities.bucket import Bucket
 from openc3.utilities.sleeper import Sleeper
@@ -95,9 +96,8 @@ class TsdbMigration(Microservice):
         self.files_processed = 0
         self.packets_ingested = 0
         self.errors_count = 0
-        self.migrated_columns = []
 
-        # Track which table schemas have been loaded for json_columns
+        # Track which table schemas have been loaded for column type tracking
         self._loaded_schemas = set()
 
     def _load_valid_targets_packets(self):
@@ -136,10 +136,14 @@ class TsdbMigration(Microservice):
 
     def _load_table_schema(self, table_name: str):
         """
-        Load existing table schema from QuestDB and register VARCHAR columns.
+        Load existing table schema from QuestDB and register column types.
 
-        This ensures DERIVED items (stored as VARCHAR) are JSON-serialized
-        during migration to match the existing schema.
+        Populates the QuestDB client's column tracking dictionaries so that
+        convert_value() casts data correctly during migration:
+        - json_columns: VARCHAR columns needing JSON serialization (DERIVED, arrays)
+        - varchar_columns: VARCHAR columns for state __C values (cast non-strings to str)
+        - decimal_int_columns: DECIMAL columns for 64-bit integers (cast ints to str)
+        - float_bit_sizes: FLOAT/DOUBLE columns for proper inf/nan sentinel encoding
         """
         if table_name in self._loaded_schemas:
             return
@@ -149,8 +153,22 @@ class TsdbMigration(Microservice):
                 cur.execute(f'SHOW COLUMNS FROM "{table_name}"')
                 for row in cur.fetchall():
                     col_name, col_type = row[0], row[1]
-                    if col_type.upper() == "VARCHAR":
-                        self.questdb.json_columns[f"{table_name}__{col_name}"] = True
+                    col_key = f"{table_name}__{col_name}"
+                    upper_type = col_type.upper()
+                    if upper_type == "VARCHAR":
+                        # __C columns are state columns (non-string values need str())
+                        # __F columns are formatted columns (always strings, no tracking needed)
+                        # Other VARCHAR columns are DERIVED/array items (need JSON serialization)
+                        if col_name.endswith("__C"):
+                            self.questdb.varchar_columns[col_key] = True
+                        elif not col_name.endswith("__F"):
+                            self.questdb.json_columns[col_key] = True
+                    elif upper_type == "FLOAT":
+                        self.questdb.float_bit_sizes[col_key] = 32
+                    elif upper_type == "DOUBLE":
+                        self.questdb.float_bit_sizes[col_key] = 64
+                    elif upper_type == "DECIMAL":
+                        self.questdb.decimal_int_columns[col_key] = True
         except Exception as e:
             self.logger.debug(f"Could not load schema for {table_name}: {e}")
 
@@ -349,7 +367,7 @@ class TsdbMigration(Microservice):
                     packet.target_name, packet.packet_name, cmd_or_tlm=cmd_or_tlm
                 )
 
-                # Load table schema to register VARCHAR columns for JSON serialization
+                # Load table schema to register column types for proper casting
                 self._load_table_schema(table_name)
 
                 # Convert JSON data to QuestDB columns
@@ -358,25 +376,30 @@ class TsdbMigration(Microservice):
                 if not columns:
                     continue
 
-                # Write with schema protection
-                success, migrated = self.questdb.write_row_with_schema_protection(
-                    table_name, columns, packet.time_nsec
-                )
+                # Write row and handle type mismatches via casting
+                try:
+                    self.questdb.write_row(table_name, columns, packet.time_nsec)
+                except IngressError as error:
+                    self.questdb.handle_ingress_error(error, table_name, columns, packet.time_nsec)
 
-                if success:
-                    packets_in_file += 1
-                    batch_count += 1
-                    self.migrated_columns.extend(migrated)
+                packets_in_file += 1
+                batch_count += 1
 
                 # Flush and sleep periodically
                 if batch_count >= self.batch_size:
-                    self.questdb.flush()
+                    try:
+                        self.questdb.flush()
+                    except IngressError as error:
+                        self.questdb.handle_ingress_error(error, table_name, columns, packet.time_nsec)
                     if self.sleeper.sleep(self.sleep_seconds):
                         break
                     batch_count = 0
 
             # Final flush
-            self.questdb.flush()
+            try:
+                self.questdb.flush()
+            except IngressError as error:
+                self.questdb.handle_ingress_error(error, table_name, columns, packet.time_nsec)
 
         except Exception as e:
             self.logger.error(
@@ -457,11 +480,6 @@ class TsdbMigration(Microservice):
                 f"Packets: {self.packets_ingested}, "
                 f"Errors: {self.errors_count}"
             )
-
-            if self.migrated_columns:
-                self.logger.warn(
-                    f"Schema migrations occurred for columns: {set(self.migrated_columns)}"
-                )
 
             # Keep running idle so the microservice doesn't restart
             while not self.cancel_thread:
