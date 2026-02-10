@@ -27,7 +27,8 @@ Gem::Specification.new do |s|
   s.metadata = {
     'openc3_store_keywords' => 'tsdb,migration,questdb',
     'source_code_uri' => 'https://github.com/OpenC3/cosmos-enterprise-plugins/tree/main/openc3-cosmos-tsdb-migration',
-    'openc3_store_access_type' => 'public'
+    'openc3_store_access_type' => 'public',
+    'openc3_cosmos_minimum_version' => '6.0.0'
   }
 
   if ENV['VERSION']
