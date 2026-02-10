@@ -1,15 +1,10 @@
 # Copyright 2026 OpenC3, Inc.
 # All Rights Reserved.
 #
-# This program is free software; you can modify and/or redistribute it
-# under the terms of the GNU Affero General Public License
-# as published by the Free Software Foundation; version 3 with
-# attribution addendums as found in the LICENSE.txt
-#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+# LICENSE.md for more details
 #
 # This file may also be used under the terms of a commercial license
 # if purchased from OpenC3, Inc.
@@ -27,8 +22,15 @@ import unittest
 from datetime import datetime, timezone
 
 # Add parent directory to path so we can import openc3 and local modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION")
+)
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"
+    ),
+)
 
 from openc3.logs.packet_log_writer import PacketLogWriter
 from openc3.packets.json_packet import JsonPacket
@@ -61,7 +63,17 @@ class TestBinFileProcessor(unittest.TestCase):
         # Write 3 JSON packets
         for i in range(3):
             pkt_data = {"COLLECTS": 100 + i, "TEMP1": 25.5 + i}
-            plw.write("JSON_PACKET", "TLM", "INST", "HEALTH_STATUS", time_nsec + i * 1000, True, pkt_data, None, "0-0")
+            plw.write(
+                "JSON_PACKET",
+                "TLM",
+                "INST",
+                "HEALTH_STATUS",
+                time_nsec + i * 1000,
+                True,
+                pkt_data,
+                None,
+                "0-0",
+            )
 
         filename = plw.filename
         plw.shutdown()
@@ -75,7 +87,17 @@ class TestBinFileProcessor(unittest.TestCase):
         # Write 3 raw packets
         for i in range(3):
             pkt_data = bytes([0x00, 0x01, 0x02, 0x03 + i])
-            plw.write("RAW_PACKET", "TLM", "INST", "HEALTH_STATUS", time_nsec + i * 1000, True, pkt_data, None, "0-0")
+            plw.write(
+                "RAW_PACKET",
+                "TLM",
+                "INST",
+                "HEALTH_STATUS",
+                time_nsec + i * 1000,
+                True,
+                pkt_data,
+                None,
+                "0-0",
+            )
 
         filename = plw.filename
         plw.shutdown()
@@ -90,11 +112,29 @@ class TestBinFileProcessor(unittest.TestCase):
         for i in range(3):
             # Raw packet
             raw_data = bytes([0x00, 0x01, 0x02, 0x03 + i])
-            plw.write("RAW_PACKET", "TLM", "INST", "RAW_PKT", time_nsec + i * 2000, True, raw_data, None, "0-0")
+            plw.write(
+                "RAW_PACKET",
+                "TLM",
+                "INST",
+                "RAW_PKT",
+                time_nsec + i * 2000,
+                True,
+                raw_data,
+                None,
+                "0-0",
+            )
             # JSON packet
             json_data = {"VALUE": 100 + i}
             plw.write(
-                "JSON_PACKET", "TLM", "INST", "JSON_PKT", time_nsec + i * 2000 + 1000, True, json_data, None, "0-0"
+                "JSON_PACKET",
+                "TLM",
+                "INST",
+                "JSON_PKT",
+                time_nsec + i * 2000 + 1000,
+                True,
+                json_data,
+                None,
+                "0-0",
             )
 
         filename = plw.filename
@@ -192,6 +232,7 @@ class TestBinFileProcessor(unittest.TestCase):
 
     def test_processor_with_logger(self):
         """BinFileProcessor accepts a logger"""
+
         # Just verify it doesn't crash with a mock logger
         class MockLogger:
             def info(self, msg):

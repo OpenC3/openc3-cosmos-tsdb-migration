@@ -1,5 +1,16 @@
 # encoding: ascii-8bit
 
+# Copyright 2026 OpenC3, Inc.
+# All Rights Reserved.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+# LICENSE.md for more details
+#
+# This file may also be used under the terms of a commercial license
+# if purchased from OpenC3, Inc.
+
 # Create the overall gemspec
 Gem::Specification.new do |s|
   s.name = 'openc3-cosmos-tsdb-migration'
@@ -25,5 +36,5 @@ Gem::Specification.new do |s|
     time = Time.now.strftime("%Y%m%d%H%M%S")
     s.version = '0.0.0' + ".#{time}"
   end
-  s.files = Dir.glob("{lib,public,microservices}/**/*") + %w(Rakefile README.md LICENSE.txt plugin.txt pyproject.toml poetry.lock)
+  s.files = Dir.glob("{lib,public,microservices}/**/*") + %w(Rakefile README.md LICENSE.md plugin.txt pyproject.toml poetry.lock)
 end

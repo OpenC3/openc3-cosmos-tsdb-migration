@@ -1,16 +1,11 @@
 # Copyright 2026 OpenC3, Inc.
 # All Rights Reserved.
 #
-# This program is free software; you can modify and/or redistribute it
-# under the terms of the GNU Affero General Public License
-# as published by the Free Software Foundation; version 3 with
-# attribution addendums as found in the LICENSE.txt
-#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+# LICENSE.md for more details
+#
 # This file may also be used under the terms of a commercial license
 # if purchased from OpenC3, Inc.
 
@@ -380,7 +375,9 @@ class TsdbMigration(Microservice):
                 try:
                     self.questdb.write_row(table_name, columns, packet.time_nsec)
                 except IngressError as error:
-                    self.questdb.handle_ingress_error(error, table_name, columns, packet.time_nsec)
+                    self.questdb.handle_ingress_error(
+                        error, table_name, columns, packet.time_nsec
+                    )
 
                 packets_in_file += 1
                 batch_count += 1
@@ -390,7 +387,9 @@ class TsdbMigration(Microservice):
                     try:
                         self.questdb.flush()
                     except IngressError as error:
-                        self.questdb.handle_ingress_error(error, table_name, columns, packet.time_nsec)
+                        self.questdb.handle_ingress_error(
+                            error, table_name, columns, packet.time_nsec
+                        )
                     if self.sleeper.sleep(self.sleep_seconds):
                         break
                     batch_count = 0
@@ -399,7 +398,9 @@ class TsdbMigration(Microservice):
             try:
                 self.questdb.flush()
             except IngressError as error:
-                self.questdb.handle_ingress_error(error, table_name, columns, packet.time_nsec)
+                self.questdb.handle_ingress_error(
+                    error, table_name, columns, packet.time_nsec
+                )
 
         except Exception as e:
             self.logger.error(

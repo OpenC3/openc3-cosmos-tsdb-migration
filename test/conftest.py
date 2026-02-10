@@ -1,15 +1,10 @@
 # Copyright 2026 OpenC3, Inc.
 # All Rights Reserved.
 #
-# This program is free software; you can modify and/or redistribute it
-# under the terms of the GNU Affero General Public License
-# as published by the Free Software Foundation; version 3 with
-# attribution addendums as found in the LICENSE.txt
-#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+# LICENSE.md for more details
 #
 # This file may also be used under the terms of a commercial license
 # if purchased from OpenC3, Inc.
@@ -30,8 +25,15 @@ import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION")
+)
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"
+    ),
+)
 
 # Set environment variables for QuestDB connection (test defaults)
 os.environ.setdefault("OPENC3_TSDB_HOSTNAME", "127.0.0.1")
@@ -64,14 +66,18 @@ def is_questdb_available():
 
 
 # Skip marker for tests requiring QuestDB
-requires_questdb = pytest.mark.skipif(not is_questdb_available(), reason="QuestDB not available")
+requires_questdb = pytest.mark.skipif(
+    not is_questdb_available(), reason="QuestDB not available"
+)
 
 
 @pytest.fixture(scope="session")
 def questdb_available():
     """Session-scoped fixture to check QuestDB availability."""
     if not is_questdb_available():
-        pytest.skip("QuestDB not available. Run: docker compose -f docker-compose.test.yml up -d")
+        pytest.skip(
+            "QuestDB not available. Run: docker compose -f docker-compose.test.yml up -d"
+        )
     return True
 
 

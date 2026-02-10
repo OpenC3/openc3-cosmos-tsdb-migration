@@ -1,4 +1,14 @@
-# Set VARIABLEs here to allow variation in your plugin
+# Copyright 2026 OpenC3, Inc.
+# All Rights Reserved.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+# LICENSE.md for more details
+#
+# This file may also be used under the terms of a commercial license
+# if purchased from OpenC3, Inc.
+
 VARIABLE migration_batch_size 1000
 VARIABLE migration_sleep_seconds 0.1
 VARIABLE migration_files_before_pause 20
