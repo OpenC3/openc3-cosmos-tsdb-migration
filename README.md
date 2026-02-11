@@ -1,10 +1,12 @@
-# OpenC3 COSMOS Migration Microservice
+# OpenC3 COSMOS Migration Plugin
 
-A Python microservice for migrating historical COSMOS decommutated telemetry and command data from bin files into QuestDB time-series database.
+![SplashScreen](/public/store_img.png)
+
+A Python plugin for migrating historical COSMOS decommutated telemetry and command data from bin files into QuestDB time-series database.
 
 ## Overview
 
-This microservice reads COSMOS5 binary packet log files (decom_logs) from S3-compatible storage and ingests the decommutated telemetry and command data into QuestDB for historical analysis and trending.
+This plugin reads COSMOS5 binary packet log files (decom_logs) from S3-compatible storage and ingests the decommutated telemetry and command data into QuestDB for historical analysis and trending.
 
 ### Key Features
 
@@ -12,13 +14,12 @@ This microservice reads COSMOS5 binary packet log files (decom_logs) from S3-com
 - Extracts JSON-encoded decommutated telemetry and commands from packet logs
 - Ingests data into QuestDB via ILP HTTP protocol
 - Processes files in reverse chronological order (newest first)
-- Tracks progress in Redis for resume capability
 - Rate-limits ingestion to avoid overwhelming operational systems
 
 ## Architecture
 
 ```
-S3/MinIO Logs Bucket          Migration Microservice              QuestDB
+S3/versitygw Logs Bucket         Plugin Microservice              QuestDB
 ┌─────────────────────┐       ┌─────────────────────────┐       ┌──────────────┐
 │ {scope}/decom_logs/ │       │                         │       │              │
 │   ├── tlm/          │──────>│  1. List files (desc)   │       │ TLM__TARGET  │
@@ -32,32 +33,44 @@ S3/MinIO Logs Bucket          Migration Microservice              QuestDB
 
 ## COSMOS Data Type to QuestDB Type Mapping
 
-| COSMOS Type | Bit Size | QuestDB Type | Notes |
-|-------------|----------|--------------|-------|
-| INT | 8/16/32 | int | Signed integers |
-| INT | 64 | long | 64-bit signed |
-| INT | 3, 13 (bitfield) | int | Bitfields fit in int |
-| UINT | 8/16 | int | Fits in signed int |
-| UINT | 32 | long | Needs 33 bits for full range |
-| UINT | 64 | varchar | Exceeds signed long range |
-| FLOAT | 32 | float | IEEE 754 single precision |
-| FLOAT | 64 | double | IEEE 754 double precision |
-| STRING | var | varchar | Variable-length text |
-| BLOCK | var | varchar | Base64-encoded binary |
-| BOOL | N/A | boolean | Native boolean |
-| ARRAY | var | varchar | JSON-serialized arrays |
-| OBJECT | var | varchar | JSON-serialized |
-| ANY | var | varchar | JSON-serialized |
+| COSMOS Type | Bit Size          | QuestDB Type   | Notes                                                                                   |
+| ----------- | ----------------- | -------------- | --------------------------------------------------------------------------------------- |
+| INT         | < 32 (8, 16, ...) | int            | Small signed integers and bitfields                                                     |
+| INT         | 32                | long           | Promoted to long (QuestDB uses int MIN as NULL)                                         |
+| INT         | 64                | DECIMAL(20, 0) | Full 64-bit signed range                                                                |
+| UINT        | < 32 (8, 16, ...) | int            | Fits in signed int                                                                      |
+| UINT        | 32                | long           | Needs 33 bits for full unsigned range                                                   |
+| UINT        | 64                | DECIMAL(20, 0) | Full 64-bit unsigned range                                                              |
+| FLOAT       | 32                | float          | IEEE 754 single precision                                                               |
+| FLOAT       | 64                | double         | IEEE 754 double precision                                                               |
+| STRING      | var               | varchar        | Variable-length text                                                                    |
+| TIME        | var               | varchar        | Stored as text                                                                          |
+| BLOCK       | var               | varchar        | Base64-encoded binary                                                                   |
+| ARRAY       | var               | varchar        | JSON-serialized arrays                                                                  |
+| OBJECT      | var               | varchar        | JSON-serialized                                                                         |
+| ANY         | var               | varchar        | JSON-serialized                                                                         |
+| DERIVED     | var               | varies         | Based on read_conversion converted_type/bit_size; defaults to varchar (JSON-serialized) |
+| Other       | var               | varchar        | JSON-serialized                                                                         |
 
 ### Special Float Value Handling
 
 QuestDB does not support IEEE 754 special values directly. The following sentinel values are used:
 
-| Special Value | Sentinel Value |
-|---------------|----------------|
-| `Infinity` | `1.7976931348623157e+308` (near `DBL_MAX`) |
-| `-Infinity` | `-1.7976931348623157e+308` (near `-DBL_MAX`) |
-| `NaN` | `1.7976931348623156e+308` (near `DBL_MAX`, slightly less) |
+#### 64-bit (double) Sentinels
+
+| Special Value | Sentinel Value                                         |
+| ------------- | ------------------------------------------------------ |
+| `Infinity`    | `1.7976931348623155e+308` (near `DBL_MAX`)             |
+| `-Infinity`   | `-1.7976931348623155e+308` (near `-DBL_MAX`)           |
+| `NaN`         | `-1.7976931348623153e+308` (negative, near `-DBL_MAX`) |
+
+#### 32-bit (float) Sentinels
+
+| Special Value | Sentinel Value                               |
+| ------------- | -------------------------------------------- |
+| `Infinity`    | `3.4028233e+38` (near `FLT_MAX`)             |
+| `-Infinity`   | `-3.4028233e+38` (near `-FLT_MAX`)           |
+| `NaN`         | `-3.4028231e+38` (negative, near `-FLT_MAX`) |
 
 These sentinels allow special float values to be stored and retrieved without data loss.
 
@@ -65,29 +78,31 @@ These sentinels allow special float values to be stored and retrieved without da
 
 - Integer `MIN_VALUE` is used as NULL sentinel in QuestDB
 - Arrays are always stored as JSON-serialized strings for consistency
+- 64-bit integer values are sent as strings via ILP; QuestDB casts them to DECIMAL
 
 ## Prerequisites
 
-- Python 3.10+
-- Docker (for QuestDB integration testing)
-- Poetry
+- COSMOS 7
 
 ## Installation
 
-The migration microservice depends on the `openc3` Python package. Install using Poetry:
+The easiest way to get this plugin installed is via the [App Store](https://store.openc3.com/cosmos_plugins/21).
 
-```bash
-# From the cosmos repository root, install the openc3 package
-cd openc3/python
-poetry install
+You can also install from [file](openc3-cosmos-tsdb-migration-1.0.0.gem) directly from this repo.
 
-# Install test dependencies (pytest, psycopg, questdb are included in openc3)
-# Tests are run from the openc3/python poetry environment
-```
+### Configuration
 
-## Running Tests
+The following plugin variables can be set during plugin installation:
 
-All tests are run using the `openc3/python` Poetry environment.
+| Variable                       | Description                                  | Default |
+| ------------------------------ | -------------------------------------------- | ------- |
+| `migration_batch_size`         | Packets per batch before flush and sleep     | 1000    |
+| `migration_sleep_seconds`      | Sleep between batches (seconds)              | 0.1     |
+| `migration_files_before_pause` | Files to process before pausing              | 20      |
+| `migration_pause_seconds`      | Pause duration between file groups (seconds) | 1.0     |
+| `migration_initial_delay`      | Delay before starting migration (seconds)    | 20      |
+
+## Developers Section
 
 ### Unit Tests (No QuestDB Required)
 
@@ -144,39 +159,3 @@ poetry run pytest ../../openc3-cosmos-migration/ -v
 cd ../../openc3-cosmos-migration
 docker compose -f docker-compose.test.yml down
 ```
-
-## Configuration
-
-The microservice uses the following environment variables:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENC3_TSDB_HOSTNAME` | QuestDB hostname | Required |
-| `OPENC3_TSDB_INGEST_PORT` | HTTP ILP ingest port | 9000 |
-| `OPENC3_TSDB_QUERY_PORT` | PostgreSQL wire protocol port | 8812 |
-| `OPENC3_TSDB_USERNAME` | QuestDB username | Required |
-| `OPENC3_TSDB_PASSWORD` | QuestDB password | Required |
-| `MIGRATION_ENABLED` | Enable migration processing | false |
-| `MIGRATION_BATCH_SIZE` | Packets per batch | 1000 |
-| `MIGRATION_SLEEP_SECONDS` | Sleep between batches | 0.5 |
-
-## File Structure
-
-```
-openc3-cosmos-migration/
-├── README.md                    # This file
-├── docker-compose.test.yml      # QuestDB container for testing
-├── migration_microservice.py    # Main microservice class
-├── bin_file_processor.py        # Bin file parsing logic
-└── tests/
-    ├── conftest.py              # Pytest fixtures for QuestDB
-    ├── test_bin_file_processor.py   # Unit tests for bin processor
-    └── test_questdb_integration.py  # Integration tests for all COSMOS types
-```
-
-## Related Components
-
-- `openc3/python/openc3/utilities/questdb_client.py` - Shared QuestDB client
-- `openc3/python/openc3/logs/packet_log_reader.py` - Binary packet log parser
-- `openc3/python/openc3/logs/packet_log_writer.py` - Binary packet log writer
-- `openc3/python/openc3/packets/json_packet.py` - JSON packet representation
