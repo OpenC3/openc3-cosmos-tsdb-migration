@@ -359,7 +359,7 @@ class TsdbMigration(Microservice):
 
                 # Get table name with appropriate prefix (CMD__ or TLM__)
                 table_name, _ = QuestDBClient.sanitize_table_name(
-                    packet.target_name, packet.packet_name, cmd_or_tlm=cmd_or_tlm
+                    packet.target_name, packet.packet_name, cmd_or_tlm=cmd_or_tlm, scope=self.scope
                 )
 
                 # Load table schema to register column types for proper casting

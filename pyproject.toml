@@ -1,6 +1,6 @@
 [project]
 name = "openc3-cosmos-tsdb-migration"
-version = "1.0.0"
+version = "1.0.1"
 description = "Migration microservice for ingesting historical bin file data into QuestDB"
 authors = [
   {name = "Support", email = "support@openc3.com"}
