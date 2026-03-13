@@ -12,7 +12,7 @@
 """
 Binary packet log file processor for migration.
 
-This module provides utilities for processing COSMOS5 binary log files
+This module provides utilities for processing COSMOS binary log files
 for data migration purposes. It uses the PacketLogReader class for
 parsing and provides additional helper functions for file management.
 """
@@ -29,7 +29,7 @@ from openc3.packets.json_packet import JsonPacket
 
 class BinFileProcessor:
     """
-    Processes COSMOS5 binary log files (decom logs) for migration.
+    Processes COSMOS binary log files (decom logs) for migration.
 
     This is a thin wrapper around PacketLogReader that handles
     compressed files and provides iteration over JSON packets.

@@ -6,11 +6,11 @@ A Python plugin for migrating historical COSMOS decommutated telemetry and comma
 
 ## Overview
 
-This plugin reads COSMOS5 binary packet log files (decom_logs) from S3-compatible storage and ingests the decommutated telemetry and command data into QuestDB for historical analysis and trending.
+This plugin reads COSMOS binary packet log files (decom_logs) from S3-compatible storage and ingests the decommutated telemetry and command data into QuestDB for historical analysis and trending.
 
 ### Key Features
 
-- Parses COSMOS5 binary packet log format (`.bin` and `.bin.gz` files)
+- Parses COSMOS binary packet log format (`.bin` and `.bin.gz` files)
 - Extracts JSON-encoded decommutated telemetry and commands from packet logs
 - Ingests data into QuestDB via ILP HTTP protocol
 - Processes files in reverse chronological order (newest first)

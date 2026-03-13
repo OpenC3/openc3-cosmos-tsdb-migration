@@ -14,7 +14,7 @@ Migration microservice for ingesting historical bin file data into QuestDB.
 
 This microservice:
 - Pulls decom_logs bin files from S3-compatible storage (both telemetry and commands)
-- Parses COSMOS5 binary format
+- Parses COSMOS log file binary format
 - Ingests data into QuestDB with type casting based on existing column types
 - Uses TLM__ and CMD__ prefixes for table names
 - Stores arrays as JSON-serialized strings
