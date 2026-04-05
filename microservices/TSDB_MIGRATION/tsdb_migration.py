@@ -375,9 +375,7 @@ class TsdbMigration(Microservice):
                 try:
                     self.questdb.write_row(table_name, columns, packet.time_nsec)
                 except IngressError as error:
-                    self.questdb.handle_ingress_error(
-                        error, table_name, columns, packet.time_nsec
-                    )
+                    self.questdb.handle_ingress_error(error)
 
                 packets_in_file += 1
                 batch_count += 1
@@ -387,9 +385,7 @@ class TsdbMigration(Microservice):
                     try:
                         self.questdb.flush()
                     except IngressError as error:
-                        self.questdb.handle_ingress_error(
-                            error, table_name, columns, packet.time_nsec
-                        )
+                        self.questdb.handle_ingress_error(error)
                     if self.sleeper.sleep(self.sleep_seconds):
                         break
                     batch_count = 0
@@ -398,9 +394,7 @@ class TsdbMigration(Microservice):
             try:
                 self.questdb.flush()
             except IngressError as error:
-                self.questdb.handle_ingress_error(
-                    error, table_name, columns, packet.time_nsec
-                )
+                self.questdb.handle_ingress_error(error)
 
         except Exception as e:
             self.logger.error(
