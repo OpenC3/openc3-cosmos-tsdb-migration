@@ -1,24 +1,20 @@
 [project]
 name = "openc3-cosmos-tsdb-migration"
-version = "1.0.1"
+version = "1.1.0"
 description = "Migration microservice for ingesting historical bin file data into QuestDB"
-authors = [
-  {name = "Support", email = "support@openc3.com"}
-]
+authors = [{ name = "Support", email = "support@openc3.com" }]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
-    "openc3",  # Includes questdb, psycopg, redis, boto3, pytest
-    "valkey (>=6.1.1,<7.0.0)",
+    "openc3",  # Includes questdb, psycopg, redis, boto3, valkey
 ]
-package-mode = false
-
-[project.scripts]
-migration = "migration_microservice:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "."]
@@ -28,11 +24,9 @@ python_functions = ["test_*"]
 
 [tool.ruff]
 lint.select = ["E", "F"]
-lint.ignore = ["E402","E501","F402","F403","F405"]
+lint.ignore = ["E402", "E501", "F402", "F403", "F405"]
 line-length = 120
 target-version = "py312"
 
 [dependency-groups]
-dev = [
-    "pytest (>=9.0.2,<10.0.0)"
-]
+dev = ["pytest (>=9.0.2,<10.0.0)"]

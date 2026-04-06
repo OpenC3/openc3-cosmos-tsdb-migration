@@ -15,12 +15,10 @@
 Gem::Specification.new do |s|
   s.name = 'openc3-cosmos-tsdb-migration'
   s.summary = 'TSDB Migration'
-  s.description = <<-EOF
-    Migrate existing COSMOS bin file data into the OpenC3 Time Series Database (TSDB).
-  EOF
+  s.description = "Migrate existing COSMOS bin file data into the OpenC3 Time Series Database (TSDB)."
   s.license = 'OpenC3'
   s.authors = ['Jason Thomas']
-  s.email = ['jason@openc3.com']
+  s.email = ['support@openc3.com']
   s.homepage = 'https://github.com/OpenC3/cosmos-enterprise-plugins/tree/main/openc3-cosmos-tsdb-migration#readme'
   s.platform = Gem::Platform::RUBY
   s.required_ruby_version = '>= 3.0'
@@ -37,5 +35,5 @@ Gem::Specification.new do |s|
     time = Time.now.strftime("%Y%m%d%H%M%S")
     s.version = '0.0.0' + ".#{time}"
   end
-  s.files = Dir.glob("{lib,public,microservices}/**/*") + %w(Rakefile README.md LICENSE.md plugin.txt pyproject.toml poetry.lock)
+  s.files = Dir.glob("{lib,public,microservices}/**/*") + %w(Rakefile README.md LICENSE.md plugin.txt pyproject.toml)
 end
