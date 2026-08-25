@@ -19,27 +19,22 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 
 # Add parent directory to path so we can import openc3 and local modules
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION")
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION"))
 sys.path.insert(
     0,
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"
-    ),
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"),
 )
-
-from openc3.logs.packet_log_writer import PacketLogWriter
-from openc3.packets.json_packet import JsonPacket
 
 from bin_file_processor import (
     BinFileProcessor,
     extract_timestamp_from_filename,
     parse_target_packet_from_filename,
 )
+from openc3.logs.packet_log_writer import PacketLogWriter
+from openc3.packets.json_packet import JsonPacket
 
 
 class TestBinFileProcessor(unittest.TestCase):

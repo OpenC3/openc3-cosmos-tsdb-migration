@@ -1,32 +1,71 @@
 [project]
 name = "openc3-cosmos-tsdb-migration"
-version = "1.1.0"
+version = "1.1.1"
 description = "Migration microservice for ingesting historical bin file data into QuestDB"
 authors = [{ name = "Support", email = "support@openc3.com" }]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
-dependencies = [
-    "openc3",  # Includes questdb, psycopg, redis, boto3, valkey
-]
+dependencies = []
 
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = []
+[tool.uv]
+package = false
+default-groups = []
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "."]
+testpaths = ["test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--cov=lib",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+source = ["microservices"]
+omit = ["*/test/*", "*/.venv/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+skip_covered = false
 
 [tool.ruff]
-lint.select = ["E", "F"]
-lint.ignore = ["E402", "E501", "F402", "F403", "F405"]
-line-length = 120
+line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ty.environment]
+python-version = "3.12"
+extra-paths = ["microservices/TSDB_MIGRATION"]
+
+[tool.ty.src]
+include = ["microservices/TSDB_MIGRATION", "test"]
+
 [dependency-groups]
-dev = ["pytest (>=9.0.2,<10.0.0)"]
+dev = [
+    "ty>=0.0.74,<0.1.0",
+    "pytest>=9.0.1",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.8",
+    "openc3",            # Only needed for development/testing; provided by COSMOS at runtime
+]

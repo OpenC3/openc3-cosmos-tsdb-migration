@@ -101,8 +101,21 @@ The following plugin variables can be set during plugin installation:
 | `migration_files_before_pause` | Files to process before pausing              | 20      |
 | `migration_pause_seconds`      | Pause duration between file groups (seconds) | 1.0     |
 | `migration_initial_delay`      | Delay before starting migration (seconds)    | 20      |
+| `migration_log_level`          | Minimum microservice log level                | INFO    |
+
+Valid log levels are `DEBUG`, `INFO`, `WARN`, `ERROR`, and `FATAL`. Set
+`migration_log_level` to `DEBUG` during plugin installation to include diagnostic
+messages without changing or rebuilding the plugin.
 
 ## Developers Section
+
+### Type Checking
+
+Run `ty` using the pinned development dependency:
+
+```bash
+uv run --group dev ty check
+```
 
 ### Unit Tests (No QuestDB Required)
 

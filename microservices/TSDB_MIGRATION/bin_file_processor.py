@@ -20,8 +20,8 @@ parsing and provides additional helper functions for file management.
 import gzip
 import os
 import tempfile
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Iterator, Optional
 
 from openc3.logs.packet_log_reader import PacketLogReader
 from openc3.packets.json_packet import JsonPacket
@@ -58,9 +58,7 @@ class BinFileProcessor:
         # Handle gzip compressed files
         if file_path.endswith(".gz"):
             with gzip.open(file_path, "rb") as gz_file:
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".bin"
-                ) as temp_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as temp_file:
                     temp_file.write(gz_file.read())
                     temp_path = temp_file.name
 
@@ -71,9 +69,7 @@ class BinFileProcessor:
         else:
             yield from self._process_file_internal(file_path)
 
-    def process_bytes(
-        self, data: bytes, filename: Optional[str] = None
-    ) -> Iterator[JsonPacket]:
+    def process_bytes(self, data: bytes, filename: str | None = None) -> Iterator[JsonPacket]:
         """
         Process bin file data from bytes.
 
