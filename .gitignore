@@ -2,3 +2,4 @@ node_modules
 __pycache__
 microservices/TSDB_MIGRATION/tsdb_migration.py
 .coverage
+*.gem
