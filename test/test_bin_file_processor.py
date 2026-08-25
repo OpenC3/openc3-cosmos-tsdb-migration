@@ -332,6 +332,18 @@ class TestParseTargetPacketFromFilename(unittest.TestCase):
         self.assertEqual(target, "INST")
         self.assertEqual(packet, "HEALTH_STATUS")
 
+    def test_extended_filename(self):
+        """extracts target and packet from filename with range and scope"""
+        filename = (
+            "20240115123045123456789__20240115124045123456789__DEFAULT__"
+            "INST__HEALTH_STATUS__rt__decom.bin.gz"
+        )
+
+        target, packet = parse_target_packet_from_filename(filename)
+
+        self.assertEqual(target, "INST")
+        self.assertEqual(packet, "HEALTH_STATUS")
+
     def test_command_filename(self):
         """extracts target and packet from command log filename"""
         filename = "20240115123045123456789__INST__COLLECT__rt__cmd.bin.gz"

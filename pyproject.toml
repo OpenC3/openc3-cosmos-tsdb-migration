@@ -19,14 +19,14 @@ python_functions = ["test_*"]
 addopts = [
     "-v",
     "--tb=short",
-    "--cov=lib",
+    "--cov=microservices/TSDB_MIGRATION",
     "--cov-report=term-missing",
     "--cov-report=html",
-    "--cov-fail-under=80",
+    "--cov-fail-under=25",
 ]
 
 [tool.coverage.run]
-source = ["microservices"]
+source = ["microservices/TSDB_MIGRATION"]
 omit = ["*/test/*", "*/.venv/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

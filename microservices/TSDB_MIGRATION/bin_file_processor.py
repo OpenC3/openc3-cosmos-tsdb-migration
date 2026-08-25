@@ -136,11 +136,15 @@ def extract_timestamp_from_filename(filename: str) -> int:
         return 0
 
 
-def parse_target_packet_from_filename(filename: str) -> tuple:
+def parse_target_packet_from_filename(
+    filename: str,
+) -> tuple[str | None, str | None]:
     """
     Extract target and packet names from a decom log filename.
 
-    Filename pattern: {start_time}__{end_time}__{scope}__{target}__{packet}__{mode}__decom.bin.gz
+    Supported filename patterns:
+    - {time}__{target}__{packet}__{mode}__decom.bin.gz
+    - {start_time}__{end_time}__{scope}__{target}__{packet}__{mode}__decom.bin.gz
 
     Args:
         filename: The filename to parse
@@ -150,7 +154,9 @@ def parse_target_packet_from_filename(filename: str) -> tuple:
     """
     basename = os.path.basename(filename)
     parts = basename.split("__")
-    # parts[0]=start_time, [1]=end_time, [2]=scope, [3]=target, [4]=packet, [5]=mode
+
+    # Both formats end with target, packet, mode, and the log type. Parsing
+    # relative to the suffix avoids coupling this helper to the timestamp prefix.
     if len(parts) >= 5:
-        return parts[3], parts[4]
+        return parts[-4], parts[-3]
     return None, None
