@@ -35,5 +35,5 @@ Gem::Specification.new do |s|
     time = Time.now.strftime("%Y%m%d%H%M%S")
     s.version = '0.0.0' + ".#{time}"
   end
-  s.files = Dir.glob("{lib,public,microservices}/**/*") + %w(Rakefile README.md LICENSE.md plugin.txt pyproject.toml)
+  s.files = Dir.glob("{lib,public,microservices}/**/*") + %w(Rakefile README.md LICENSE.md plugin.txt pyproject.toml uv.lock)
 end
