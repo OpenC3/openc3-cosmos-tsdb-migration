@@ -14,6 +14,7 @@ VARIABLE migration_sleep_seconds 0.1
 VARIABLE migration_files_before_pause 20
 VARIABLE migration_pause_seconds 1.0
 VARIABLE migration_initial_delay 20
+VARIABLE migration_log_level INFO
 
 MICROSERVICE TSDB_MIGRATION tsdb-migration-microservice
   CMD python tsdb_migration.py
@@ -22,3 +23,4 @@ MICROSERVICE TSDB_MIGRATION tsdb-migration-microservice
   OPTION FILES_BEFORE_PAUSE <%= migration_files_before_pause %>
   OPTION PAUSE_SECONDS <%= migration_pause_seconds %>
   OPTION INITIAL_DELAY <%= migration_initial_delay %>
+  OPTION LOG_LEVEL <%= migration_log_level %>

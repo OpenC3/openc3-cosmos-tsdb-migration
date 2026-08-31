@@ -19,27 +19,22 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 
 # Add parent directory to path so we can import openc3 and local modules
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION")
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION"))
 sys.path.insert(
     0,
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"
-    ),
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"),
 )
-
-from openc3.logs.packet_log_writer import PacketLogWriter
-from openc3.packets.json_packet import JsonPacket
 
 from bin_file_processor import (
     BinFileProcessor,
     extract_timestamp_from_filename,
     parse_target_packet_from_filename,
 )
+from openc3.logs.packet_log_writer import PacketLogWriter
+from openc3.packets.json_packet import JsonPacket
 
 
 class TestBinFileProcessor(unittest.TestCase):
@@ -331,6 +326,18 @@ class TestParseTargetPacketFromFilename(unittest.TestCase):
     def test_valid_filename_with_path(self):
         """extracts target and packet from filename with path"""
         filename = "/path/to/logs/20240115123045123456789__INST__HEALTH_STATUS__rt__decom.bin.gz"
+
+        target, packet = parse_target_packet_from_filename(filename)
+
+        self.assertEqual(target, "INST")
+        self.assertEqual(packet, "HEALTH_STATUS")
+
+    def test_extended_filename(self):
+        """extracts target and packet from filename with range and scope"""
+        filename = (
+            "20240115123045123456789__20240115124045123456789__DEFAULT__"
+            "INST__HEALTH_STATUS__rt__decom.bin.gz"
+        )
 
         target, packet = parse_target_packet_from_filename(filename)
 

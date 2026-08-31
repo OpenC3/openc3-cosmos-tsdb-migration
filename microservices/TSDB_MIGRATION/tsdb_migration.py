@@ -28,20 +28,38 @@ This microservice:
 import gzip
 import os
 import traceback
-from datetime import datetime, timezone
-
-from questdb.ingress import IngressError
-from openc3.microservices.microservice import Microservice
-from openc3.utilities.bucket import Bucket
-from openc3.utilities.sleeper import Sleeper
-from openc3.utilities.questdb_client import QuestDBClient
-from openc3.api import *
+from datetime import UTC, datetime
 
 from bin_file_processor import (
     BinFileProcessor,
     extract_timestamp_from_filename,
     parse_target_packet_from_filename,
 )
+from openc3.api import get_all_cmd_names, get_all_tlm_names, get_target_names
+from openc3.microservices.microservice import Microservice
+from openc3.utilities.bucket import Bucket
+from openc3.utilities.questdb_client import QuestDBClient
+from openc3.utilities.sleeper import Sleeper
+from questdb.ingress import IngressError
+
+
+def configure_log_level(logger, log_level: str) -> None:
+    """Set and validate the migration microservice's logger level."""
+    normalized_level = log_level.upper()
+    valid_log_levels = {
+        "DEBUG": logger.DEBUG,
+        "INFO": logger.INFO,
+        "WARN": logger.WARN,
+        "ERROR": logger.ERROR,
+        "FATAL": logger.FATAL,
+    }
+    try:
+        logger.level = valid_log_levels[normalized_level]
+    except KeyError as error:
+        valid_values = ", ".join(valid_log_levels)
+        raise ValueError(
+            f"Invalid LOG_LEVEL {log_level!r}; expected one of: {valid_values}"
+        ) from error
 
 
 class TsdbMigration(Microservice):
@@ -58,6 +76,7 @@ class TsdbMigration(Microservice):
         self.files_before_pause = 10
         self.pause_seconds = 30.0
         self.initial_delay = 60
+        self.log_level = "INFO"
 
         # Process options from plugin.txt
         for option in self.config.get("options", []):
@@ -72,10 +91,13 @@ class TsdbMigration(Microservice):
                     self.pause_seconds = float(option[1])
                 case "INITIAL_DELAY":
                     self.initial_delay = int(option[1])
+                case "LOG_LEVEL":
+                    self.log_level = option[1].upper()
                 case _:
-                    self.logger.error(
-                        f"Unknown option passed to microservice {name}: {option}"
-                    )
+                    self.logger.error(f"Unknown option passed to microservice {name}: {option}")
+
+        configure_log_level(self.logger, self.log_level)
+        self.logger.debug(f"Debug logging enabled for microservice {name}")
 
         self.sleeper = Sleeper()
         self.bucket = Bucket.getClient()
@@ -144,7 +166,10 @@ class TsdbMigration(Microservice):
             return
 
         try:
-            with self.questdb.query.cursor() as cur:
+            query = self.questdb.query
+            if query is None:
+                raise RuntimeError("QuestDB query connection is not established")
+            with query.cursor() as cur:
                 cur.execute(f'SHOW COLUMNS FROM "{table_name}"')
                 for row in cur.fetchall():
                     col_name, col_type = row[0], row[1]
@@ -163,7 +188,9 @@ class TsdbMigration(Microservice):
                     elif upper_type == "DOUBLE":
                         self.questdb.float_bit_sizes[col_key] = 64
                     elif upper_type == "DECIMAL":
-                        self.questdb.decimal_int_columns[col_key] = True
+                        decimal_int_columns = getattr(self.questdb, "decimal_int_columns", None)
+                        if decimal_int_columns is not None:
+                            decimal_int_columns[col_key] = True
         except Exception as e:
             self.logger.debug(f"Could not load schema for {table_name}: {e}")
 
@@ -177,9 +204,7 @@ class TsdbMigration(Microservice):
         """Check if a file should be processed based on current system definitions."""
         target_name, packet_name = parse_target_packet_from_filename(filename)
         if target_name is None or packet_name is None:
-            self.logger.debug(
-                f"Could not parse target/packet from filename: {filename}"
-            )
+            self.logger.debug(f"Could not parse target/packet from filename: {filename}")
             return False
 
         if target_name not in self.valid_targets:
@@ -211,9 +236,7 @@ class TsdbMigration(Microservice):
             current_prefix = dirs_to_process.pop(0)
             self.logger.info(f"Listing files under: {current_prefix}")
             try:
-                dir_list, file_list = self.bucket.list_files(
-                    bucket=bucket, path=current_prefix
-                )
+                dir_list, file_list = self.bucket.list_files(bucket=bucket, path=current_prefix)
 
                 # Add subdirectories to process (dir_list contains strings)
                 for dir_name in dir_list:
@@ -289,9 +312,7 @@ class TsdbMigration(Microservice):
         logs_bucket = os.environ.get("OPENC3_LOGS_BUCKET", "logs")
 
         # Replace decom_logs with processed/decom_logs
-        processed_path = original_path.replace(
-            "/decom_logs/", "/processed/decom_logs/", 1
-        )
+        processed_path = original_path.replace("/decom_logs/", "/processed/decom_logs/", 1)
 
         try:
             # Read the original file
@@ -397,9 +418,7 @@ class TsdbMigration(Microservice):
                 self.questdb.handle_ingress_error(error)
 
         except Exception as e:
-            self.logger.error(
-                f"Error processing file {file_path}: {e}\n{traceback.format_exc()}"
-            )
+            self.logger.error(f"Error processing file {file_path}: {e}\n{traceback.format_exc()}")
             self.errors_count += 1
             had_error = True
 
@@ -412,7 +431,7 @@ class TsdbMigration(Microservice):
             return
 
         self.logger.info("Starting QuestDB migration microservice")
-        self.started_at = datetime.now(timezone.utc).isoformat()
+        self.started_at = datetime.now(UTC).isoformat()
         self.state = "STARTING"
 
         try:
@@ -460,9 +479,7 @@ class TsdbMigration(Microservice):
                 # Periodic pause to let operational system catch up
                 if files_since_pause >= self.files_before_pause:
                     self.state = "PAUSED"
-                    self.logger.info(
-                        f"Pausing for {self.pause_seconds}s to reduce system load..."
-                    )
+                    self.logger.info(f"Pausing for {self.pause_seconds}s to reduce system load...")
                     if self.sleeper.sleep(self.pause_seconds):
                         break
                     files_since_pause = 0
@@ -488,11 +505,11 @@ class TsdbMigration(Microservice):
         finally:
             self.questdb.close()
 
-    def shutdown(self):
+    def shutdown(self, state="STOPPED"):
         """Graceful shutdown."""
         self.sleeper.cancel()
         self.questdb.close()
-        super().shutdown()
+        super().shutdown(state)
 
 
 if __name__ == "__main__":
