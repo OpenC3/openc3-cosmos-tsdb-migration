@@ -479,12 +479,16 @@ class TsdbMigration(Microservice):
         """
         Process a single bin file and ingest its data into QuestDB.
 
-        Returns tuple of (packets_ingested, had_error). had_error is True if any row was
-        dropped, so the caller can route the file to error/ instead of processed/ and
-        leave the data available for a retry.
+        Returns tuple of (packets_ingested, had_error, cancelled). had_error is True if any
+        row was dropped, so the caller can route the file to error/ instead of processed/
+        and leave the data available for a retry. cancelled is True if shutdown stopped
+        the file part way, so the caller leaves it in decom_logs/ to be picked up again.
+        Re-ingesting the rows already written is safe because tables DEDUP on
+        PACKET_TIMESECONDS.
         """
         packets_in_file = 0
         had_error = False
+        cancelled = False
 
         # Used only when a packet doesn't carry its own cmd_or_tlm
         path_cmd_or_tlm = "CMD" if self._is_command_file(file_path) else "TLM"
@@ -498,11 +502,14 @@ class TsdbMigration(Microservice):
 
             for packet in self.bin_processor.process_bytes(data):
                 if self.cancel_thread:
+                    cancelled = True
                     break
 
                 # The packet records whether it is a command or telemetry. Fall back to
                 # the bucket path, which matters for __ALL__ files holding both.
-                cmd_or_tlm = packet.cmd_or_tlm if packet.cmd_or_tlm in ("CMD", "TLM") else path_cmd_or_tlm
+                cmd_or_tlm = (
+                    packet.cmd_or_tlm if packet.cmd_or_tlm in ("CMD", "TLM") else path_cmd_or_tlm
+                )
                 # An __ALL__ file holds every packet logged for the target, including
                 # ones since removed from the config. Skip those instead of failing the
                 # whole file, matching how obsolete packets are filtered by filename.
@@ -555,6 +562,7 @@ class TsdbMigration(Microservice):
                 # write_row auto flushes once batch_size rows are buffered. Sleep after
                 # each flush to keep the operational system responsive.
                 if flushed and self.sleeper.sleep(self.sleep_seconds):
+                    cancelled = True
                     break
 
             # Final flush of every shard this file wrote to
@@ -572,7 +580,7 @@ class TsdbMigration(Microservice):
         if had_error:
             self.errors_count += 1
 
-        return packets_in_file, had_error
+        return packets_in_file, had_error, cancelled
 
     def run(self):
         """Main run loop for the migration microservice."""
@@ -607,8 +615,12 @@ class TsdbMigration(Microservice):
                 self.state = f"MIGRATING {idx + 1}/{total_files}"
                 self.logger.info(f"Processing: {file_path}")
 
-                packets, had_error = self._process_file(file_path)
+                packets, had_error, cancelled = self._process_file(file_path)
                 self.packets_ingested += packets
+                if cancelled:
+                    # Leave the partly read file under decom_logs/ so it is retried on restart
+                    self.logger.info(f"Cancelled: {file_path} left in place for retry")
+                    break
                 self.files_processed += 1
                 files_since_pause += 1
 

@@ -332,9 +332,11 @@ def test_process_file_writes_received_time(monkeypatch):
     client = RecordingClient()
     migration = build_file_migration(monkeypatch, [FilePacket()], client)
 
-    count, had_error = migration._process_file("DEFAULT/decom_logs/tlm/INST/x__decom.bin")
+    count, had_error, cancelled = migration._process_file(
+        "DEFAULT/decom_logs/tlm/INST/x__decom.bin"
+    )
 
-    assert (count, had_error) == (1, False)
+    assert (count, had_error, cancelled) == (1, False, False)
     _table, _columns, ts, rx = client.rows[0]
     # Without rx the RECEIVED_TIMESECONDS/RECEIVED_TIMEFORMATTED items are missing on read
     assert ts == 1_700_000_000_000_000_000
@@ -380,9 +382,11 @@ def test_process_file_reports_dropped_rows_as_error(monkeypatch):
     client.handle_result = False  # client could not recover, rows were dropped
     migration = build_file_migration(monkeypatch, [FilePacket()], client)
 
-    count, had_error = migration._process_file("DEFAULT/decom_logs/tlm/INST/x__decom.bin")
+    count, had_error, cancelled = migration._process_file(
+        "DEFAULT/decom_logs/tlm/INST/x__decom.bin"
+    )
 
-    assert (count, had_error) == (0, True)
+    assert (count, had_error, cancelled) == (0, True, False)
     assert migration.errors_count == 1
 
 
@@ -394,9 +398,11 @@ def test_process_file_counts_recovered_rows(monkeypatch):
     client.handle_result = True
     migration = build_file_migration(monkeypatch, [FilePacket()], client)
 
-    count, had_error = migration._process_file("DEFAULT/decom_logs/tlm/INST/x__decom.bin")
+    count, had_error, cancelled = migration._process_file(
+        "DEFAULT/decom_logs/tlm/INST/x__decom.bin"
+    )
 
-    assert (count, had_error) == (1, False)
+    assert (count, had_error, cancelled) == (1, False, False)
     assert migration.errors_count == 0
 
 
@@ -410,10 +416,45 @@ def test_process_file_skips_obsolete_packet_without_failing_file(monkeypatch):
     ]
     migration = build_file_migration(monkeypatch, packets, client)
 
-    count, had_error = migration._process_file("DEFAULT/decom_logs/tlm/INST/x__ALL__rt__decom.bin")
+    count, had_error, cancelled = migration._process_file(
+        "DEFAULT/decom_logs/tlm/INST/x__ALL__rt__decom.bin"
+    )
 
-    assert (count, had_error) == (2, False)
+    assert (count, had_error, cancelled) == (2, False, False)
     assert migration.errors_count == 0
+
+
+class FlushingClient(RecordingClient):
+    """RecordingClient whose every write triggers an auto flush."""
+
+    def write_row(self, table_name, columns, timestamp_ns, rx_timestamp_ns=None):
+        super().write_row(table_name, columns, timestamp_ns, rx_timestamp_ns)
+        return True
+
+
+def test_process_file_reports_cancel_during_rate_limit_sleep(monkeypatch):
+    """A shutdown mid file must not let run() move the partly read file to processed/."""
+    client = FlushingClient()
+    migration = build_file_migration(monkeypatch, [FilePacket(), FilePacket()], client)
+    migration.sleeper = type("S", (), {"sleep": lambda self, secs: True})()
+
+    count, had_error, cancelled = migration._process_file(
+        "DEFAULT/decom_logs/tlm/INST/x__decom.bin"
+    )
+
+    assert (count, had_error, cancelled) == (1, False, True)
+
+
+def test_process_file_reports_cancel_thread(monkeypatch):
+    client = RecordingClient()
+    migration = build_file_migration(monkeypatch, [FilePacket()], client)
+    migration.cancel_thread = True
+
+    count, had_error, cancelled = migration._process_file(
+        "DEFAULT/decom_logs/tlm/INST/x__decom.bin"
+    )
+
+    assert (count, had_error, cancelled) == (0, False, True)
 
 
 def test_is_valid_packet_separates_cmd_and_tlm():
