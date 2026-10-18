@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime
 
 # Add parent directory to path so we can import openc3 and local modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION"))
@@ -256,7 +256,7 @@ class TestExtractTimestampFromFilename(unittest.TestCase):
         result = extract_timestamp_from_filename(filename)
 
         # Should parse: 2024-01-15 12:30:45.123
-        expected_dt = datetime(2024, 1, 15, 12, 30, 45, 123000)
+        expected_dt = datetime(2024, 1, 15, 12, 30, 45, 123000, tzinfo=UTC)
         expected_nsec = int(expected_dt.timestamp() * 1_000_000_000)
         self.assertEqual(result, expected_nsec)
 
@@ -266,7 +266,7 @@ class TestExtractTimestampFromFilename(unittest.TestCase):
 
         result = extract_timestamp_from_filename(filename)
 
-        expected_dt = datetime(2024, 1, 15, 12, 30, 45, 123000)
+        expected_dt = datetime(2024, 1, 15, 12, 30, 45, 123000, tzinfo=UTC)
         expected_nsec = int(expected_dt.timestamp() * 1_000_000_000)
         self.assertEqual(result, expected_nsec)
 
@@ -306,7 +306,7 @@ class TestExtractTimestampFromFilename(unittest.TestCase):
 
         result = extract_timestamp_from_filename(filename)
 
-        expected_dt = datetime(2024, 1, 15, 12, 30, 45, 123000)
+        expected_dt = datetime(2024, 1, 15, 12, 30, 45, 123000, tzinfo=UTC)
         expected_nsec = int(expected_dt.timestamp() * 1_000_000_000)
         self.assertEqual(result, expected_nsec)
 

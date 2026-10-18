@@ -20,13 +20,17 @@ This microservice:
 - Stores arrays as JSON-serialized strings
 - Handles special float values (+/-Infinity, NaN) via sentinel values
 - Processes files in reverse chronological order (newest first)
-- Moves processed files to a processed/ folder
-- Tracks progress in Redis for resume capability
+- Moves processed files to a processed/ folder (and failed files to error/)
+- Resumes where it left off by only listing files still under decom_logs/
+- Routes each target to its configured db_shard
 - Rate-limits ingestion to avoid overwhelming the operational system
 """
 
+import contextlib
 import gzip
+import json
 import os
+import re
 import traceback
 from datetime import UTC, datetime
 
@@ -35,11 +39,18 @@ from bin_file_processor import (
     extract_timestamp_from_filename,
     parse_target_packet_from_filename,
 )
-from openc3.api import get_all_cmd_names, get_all_tlm_names, get_target_names
+from openc3.api import (
+    get_all_cmd_names,
+    get_all_tlm_names,
+    get_cmd,
+    get_target_names,
+    get_tlm,
+)
 from openc3.microservices.microservice import Microservice
 from openc3.utilities.bucket import Bucket
 from openc3.utilities.questdb_client import QuestDBClient
 from openc3.utilities.sleeper import Sleeper
+from openc3.utilities.store import Store
 from questdb.ingress import IngressError
 
 
@@ -66,6 +77,15 @@ class TsdbMigration(Microservice):
     """
     Migration microservice for ingesting historical bin file data into QuestDB.
     """
+
+    # QuestDB returns "table does not exist" when QDB_LINE_AUTO_CREATE_NEW_TABLES=false
+    # and an ILP write targets a table that was never created (or was dropped from the
+    # admin UI). Matches TsdbMicroservice so both recover the same way.
+    MISSING_TABLE_RE = re.compile(r"table\s+does\s+not\s+exist", re.IGNORECASE)
+
+    # Reverse of the unit suffixes QuestDBClient accepts in retain_time, used to hand an
+    # existing table's TTL back to create_table unchanged.
+    TTL_UNIT_SUFFIXES = {"HOUR": "h", "DAY": "d", "WEEK": "w", "MONTH": "M", "YEAR": "y"}
 
     def __init__(self, name):
         super().__init__(name)
@@ -101,7 +121,9 @@ class TsdbMigration(Microservice):
 
         self.sleeper = Sleeper()
         self.bucket = Bucket.getClient()
-        self.questdb = QuestDBClient(logger=self.logger)
+        # QuestDB clients keyed by db_shard. Targets can be assigned to different
+        # shards so each one needs its own connection, resolved lazily per target.
+        self.questdb_clients = {}
         self.bin_processor = BinFileProcessor(logger=self.logger)
 
         # Valid targets/packets (current system definitions)
@@ -128,7 +150,7 @@ class TsdbMigration(Microservice):
                 # Load telemetry packets
                 try:
                     self.valid_tlm_packets[target] = set(
-                        get_all_tlm_names(target, scope=self.scope)
+                        get_all_tlm_names(target, hidden=True, scope=self.scope)
                     )
                 except Exception:
                     self.valid_tlm_packets[target] = set()
@@ -136,7 +158,7 @@ class TsdbMigration(Microservice):
                 # Load command packets
                 try:
                     self.valid_cmd_packets[target] = set(
-                        get_all_cmd_names(target, scope=self.scope)
+                        get_all_cmd_names(target, hidden=True, scope=self.scope)
                     )
                 except Exception:
                     self.valid_cmd_packets[target] = set()
@@ -151,50 +173,94 @@ class TsdbMigration(Microservice):
             self.logger.error(f"Failed to load target/packet definitions: {e}")
             raise
 
-    def _load_table_schema(self, table_name: str):
+    def _client_for_shard(self, db_shard: int) -> QuestDBClient:
         """
-        Load existing table schema from QuestDB and register column types.
+        Get or create a connected QuestDBClient for the given db_shard.
 
-        Populates the QuestDB client's column tracking dictionaries so that
-        convert_value() casts data correctly during migration:
-        - json_columns: VARCHAR columns needing JSON serialization (DERIVED, arrays)
-        - varchar_columns: VARCHAR columns for state __C values (cast non-strings to str)
-        - decimal_int_columns: DECIMAL columns for 64-bit integers (cast ints to str)
-        - float_bit_sizes: FLOAT/DOUBLE columns for proper inf/nan sentinel encoding
+        Each shard is a separate QuestDB host (OPENC3_TSDB_HOSTNAME with SHARDNUM
+        substitution) so a target assigned to shard 1 cannot be written through the
+        shard 0 connection.
         """
+        client = self.questdb_clients.get(db_shard)
+        if client is None:
+            client = QuestDBClient(
+                logger=self.logger,
+                name=f"Microservice {self.name}",
+                batch_size=self.batch_size,
+                db_shard=db_shard,
+            )
+            client.connect_ingest()
+            client.connect_query()
+            self.questdb_clients[db_shard] = client
+            self.logger.info(f"Connected to QuestDB db_shard {db_shard}")
+        return client
+
+    def _close_clients(self):
+        """Close every per-shard QuestDB client."""
+        for client in self.questdb_clients.values():
+            with contextlib.suppress(Exception):
+                client.close()
+        self.questdb_clients.clear()
+
+    def _existing_retain_time(self, client: QuestDBClient, table_name: str):
+        """
+        Read the TTL already set on a table and return it in create_table's compact format.
+
+        create_table treats retain_time=None as "this table should have no TTL" and will
+        ALTER the TTL away. The migration is not the owner of retention (the TSDB
+        microservice applies CMD/TLM_DECOM_RETAIN_TIME from the plugin config), so the
+        current value is handed straight back to leave it untouched.
+
+        Returns a string like "30d", or None if the table has no TTL or does not exist.
+        """
+        existing = client._get_existing_ttl(table_name)
+        if not existing:
+            return None
+        value, unit = existing
+        suffix = self.TTL_UNIT_SUFFIXES.get(unit)
+        if not value or not suffix:
+            return None
+        return f"{value}{suffix}"
+
+    def _ensure_table(
+        self, client: QuestDBClient, target_name: str, packet_name: str, cmd_or_tlm: str
+    ) -> str:
+        """
+        Make sure the table exists and the client knows how to convert each column.
+
+        Delegates to QuestDBClient.create_table, which is the same call the real-time
+        TsdbMicroservice makes. It creates the table when missing (ILP auto create is
+        disabled, so writing to a missing table just fails) and, as a side effect,
+        populates the json_columns / varchar_columns / float_bit_sizes tracking from the
+        packet definition. Deriving that tracking from the definition rather than from
+        SHOW COLUMNS is what keeps BLOCK items base64 encoded and DERIVED __C items JSON
+        encoded exactly as the real-time path writes them.
+
+        Returns the sanitized table name. Raises if the table could not be created.
+        """
+        table_name, _ = QuestDBClient.sanitize_table_name(
+            target_name, packet_name, cmd_or_tlm=cmd_or_tlm, scope=self.scope
+        )
         if table_name in self._loaded_schemas:
-            return
+            return table_name
 
-        try:
-            query = self.questdb.query
-            if query is None:
-                raise RuntimeError("QuestDB query connection is not established")
-            with query.cursor() as cur:
-                cur.execute(f'SHOW COLUMNS FROM "{table_name}"')
-                for row in cur.fetchall():
-                    col_name, col_type = row[0], row[1]
-                    col_key = f"{table_name}__{col_name}"
-                    upper_type = col_type.upper()
-                    if upper_type == "VARCHAR":
-                        # __C columns are state columns (non-string values need str())
-                        # __F columns are formatted columns (always strings, no tracking needed)
-                        # Other VARCHAR columns are DERIVED/array items (need JSON serialization)
-                        if col_name.endswith("__C"):
-                            self.questdb.varchar_columns[col_key] = True
-                        elif not col_name.endswith("__F"):
-                            self.questdb.json_columns[col_key] = True
-                    elif upper_type == "FLOAT":
-                        self.questdb.float_bit_sizes[col_key] = 32
-                    elif upper_type == "DOUBLE":
-                        self.questdb.float_bit_sizes[col_key] = 64
-                    elif upper_type == "DECIMAL":
-                        decimal_int_columns = getattr(self.questdb, "decimal_int_columns", None)
-                        if decimal_int_columns is not None:
-                            decimal_int_columns[col_key] = True
-        except Exception as e:
-            self.logger.debug(f"Could not load schema for {table_name}: {e}")
+        if cmd_or_tlm == "CMD":
+            packet = get_cmd(target_name, packet_name, scope=self.scope)
+        else:
+            packet = get_tlm(target_name, packet_name, scope=self.scope)
 
+        client.create_table(
+            target_name,
+            packet_name,
+            packet,
+            cmd_or_tlm,
+            retain_time=self._existing_retain_time(client, table_name),
+            scope=self.scope,
+        )
+        # Only cache on success so a transient failure doesn't permanently leave this
+        # table without column type tracking.
         self._loaded_schemas.add(table_name)
+        return table_name
 
     def _is_command_file(self, file_path: str) -> bool:
         """Determine if a file is from the command logs (vs telemetry)."""
@@ -216,16 +282,20 @@ class TsdbMigration(Microservice):
             return True
 
         # Check the appropriate packet set based on cmd vs tlm
-        if self._is_command_file(filename):
-            valid_packets = self.valid_cmd_packets.get(target_name, set())
-        else:
-            valid_packets = self.valid_tlm_packets.get(target_name, set())
-
-        if packet_name not in valid_packets:
+        cmd_or_tlm = "CMD" if self._is_command_file(filename) else "TLM"
+        if not self._is_valid_packet(target_name, packet_name, cmd_or_tlm):
             self.logger.debug(f"Skipping obsolete packet: {target_name}/{packet_name}")
             return False
 
         return True
+
+    def _is_valid_packet(self, target_name: str, packet_name: str, cmd_or_tlm: str) -> bool:
+        """Check a single target/packet against the current system definitions."""
+        if target_name not in self.valid_targets:
+            return False
+        if cmd_or_tlm == "CMD":
+            return packet_name in self.valid_cmd_packets.get(target_name, set())
+        return packet_name in self.valid_tlm_packets.get(target_name, set())
 
     def _list_files_recursive(self, bucket: str, prefix: str) -> list:
         """Recursively list all files under a prefix."""
@@ -355,72 +425,152 @@ class TsdbMigration(Microservice):
         except Exception as e:
             self.logger.warn(f"Failed to move file to error: {e}")
 
+    def _handle_ingress_error(self, client: QuestDBClient, error, packet, cmd_or_tlm: str) -> bool:
+        """
+        Recover from an IngressError raised while writing or flushing a row.
+
+        Mirrors TsdbMicroservice: a missing table is recreated from the packet definition
+        and the buffered rows replayed, anything else is delegated to the client which
+        casts the offending value to the column type and retries.
+
+        Returns True if the buffered rows were recovered, False if they were dropped.
+        """
+        if self.MISSING_TABLE_RE.search(str(error)):
+            # ILP auto create is disabled so a dropped table fails every write until it
+            # is recreated with the proper COSMOS schema and designated timestamp.
+            self.logger.warn(f"QuestDB: Missing table IngressError: {error}")
+            if packet is None:
+                self._reset_after_error(client)
+                return False
+            try:
+                table_name, _ = QuestDBClient.sanitize_table_name(
+                    packet.target_name, packet.packet_name, cmd_or_tlm=cmd_or_tlm, scope=self.scope
+                )
+                self._loaded_schemas.discard(table_name)
+                self._ensure_table(client, packet.target_name, packet.packet_name, cmd_or_tlm)
+                pending_count = len(client.pending_rows)
+                client._reconnect_and_retry_pending()
+                client.flush()
+                self.logger.info(
+                    f"QuestDB: Recreated missing table {table_name}, "
+                    f"replayed {pending_count} pending rows"
+                )
+                return True
+            except Exception as exc:
+                self.logger.error(
+                    f"QuestDB: Failed to recreate missing table: {exc}\n{traceback.format_exc()}"
+                )
+                self._reset_after_error(client)
+                return False
+
+        # Cast the value to fit the column type and retry. Returns False when the rows
+        # could not be recovered, in which case they have been dropped.
+        return client.handle_ingress_error(error)
+
+    def _reset_after_error(self, client: QuestDBClient):
+        """Discard buffered rows and reopen the ILP sender."""
+        client.pending_rows.clear()
+        try:
+            client.connect_ingest()
+        except Exception:
+            self.logger.error(f"QuestDB: Failed to reconnect:\n{traceback.format_exc()}")
+
     def _process_file(self, file_path: str) -> tuple:
         """
         Process a single bin file and ingest its data into QuestDB.
 
-        Returns tuple of (packets_ingested, had_error).
+        Returns tuple of (packets_ingested, had_error). had_error is True if any row was
+        dropped, so the caller can route the file to error/ instead of processed/ and
+        leave the data available for a retry.
         """
         packets_in_file = 0
         had_error = False
 
-        # Determine if this is a command or telemetry file
-        is_command = self._is_command_file(file_path)
-        cmd_or_tlm = "CMD" if is_command else "TLM"
+        # Used only when a packet doesn't carry its own cmd_or_tlm
+        path_cmd_or_tlm = "CMD" if self._is_command_file(file_path) else "TLM"
+        clients_used = {}
+        last_packet = None
+        last_cmd_or_tlm = path_cmd_or_tlm
 
         try:
             # Download and decompress file
             data = self._download_file(file_path)
 
-            # Process the file
-            batch_count = 0
             for packet in self.bin_processor.process_bytes(data):
                 if self.cancel_thread:
                     break
 
-                # Get table name with appropriate prefix (CMD__ or TLM__)
-                table_name, _ = QuestDBClient.sanitize_table_name(
-                    packet.target_name, packet.packet_name, cmd_or_tlm=cmd_or_tlm, scope=self.scope
+                # The packet records whether it is a command or telemetry. Fall back to
+                # the bucket path, which matters for __ALL__ files holding both.
+                cmd_or_tlm = packet.cmd_or_tlm if packet.cmd_or_tlm in ("CMD", "TLM") else path_cmd_or_tlm
+                # An __ALL__ file holds every packet logged for the target, including
+                # ones since removed from the config. Skip those instead of failing the
+                # whole file, matching how obsolete packets are filtered by filename.
+                if not self._is_valid_packet(packet.target_name, packet.packet_name, cmd_or_tlm):
+                    self.logger.debug(
+                        f"Skipping obsolete packet: {packet.target_name}/{packet.packet_name}"
+                    )
+                    continue
+
+                last_packet = packet
+                last_cmd_or_tlm = cmd_or_tlm
+
+                # Targets can be assigned to different shards, so pick the client per packet.
+                # Store.db_shard_for_target caches lookups for a minute.
+                db_shard = Store.db_shard_for_target(packet.target_name, scope=self.scope)
+                client = self._client_for_shard(db_shard)
+                clients_used[db_shard] = client
+
+                # Create the table if needed and register column types for proper casting
+                table_name = self._ensure_table(
+                    client, packet.target_name, packet.packet_name, cmd_or_tlm
                 )
 
-                # Load table schema to register column types for proper casting
-                self._load_table_schema(table_name)
-
                 # Convert JSON data to QuestDB columns
-                columns = self.questdb.process_json_data(packet.json_hash, table_name)
+                columns = client.process_json_data(packet.json_hash, table_name)
 
                 if not columns:
                     continue
 
-                # Write row and handle type mismatches via casting
+                # COSMOS_EXTRA carries command metadata (user, approver) and any telemetry
+                # data that doesn't fit in a defined item
+                if packet.extra:
+                    columns["COSMOS_EXTRA"] = json.dumps(packet.extra)
+
+                # Write with both the packet time and the received time. Without the
+                # received time RECEIVED_TIMESECONDS and RECEIVED_TIMEFORMATTED are
+                # missing from every migrated row.
+                flushed = False
                 try:
-                    self.questdb.write_row(table_name, columns, packet.time_nsec)
+                    flushed = client.write_row(
+                        table_name, columns, packet.time_nsec, packet.received_time_nsec
+                    )
+                    packets_in_file += 1
                 except IngressError as error:
-                    self.questdb.handle_ingress_error(error)
+                    if self._handle_ingress_error(client, error, packet, cmd_or_tlm):
+                        packets_in_file += 1
+                    else:
+                        had_error = True
 
-                packets_in_file += 1
-                batch_count += 1
+                # write_row auto flushes once batch_size rows are buffered. Sleep after
+                # each flush to keep the operational system responsive.
+                if flushed and self.sleeper.sleep(self.sleep_seconds):
+                    break
 
-                # Flush and sleep periodically
-                if batch_count >= self.batch_size:
-                    try:
-                        self.questdb.flush()
-                    except IngressError as error:
-                        self.questdb.handle_ingress_error(error)
-                    if self.sleeper.sleep(self.sleep_seconds):
-                        break
-                    batch_count = 0
-
-            # Final flush
-            try:
-                self.questdb.flush()
-            except IngressError as error:
-                self.questdb.handle_ingress_error(error)
+            # Final flush of every shard this file wrote to
+            for client in clients_used.values():
+                try:
+                    client.flush()
+                except IngressError as error:
+                    if not self._handle_ingress_error(client, error, last_packet, last_cmd_or_tlm):
+                        had_error = True
 
         except Exception as e:
             self.logger.error(f"Error processing file {file_path}: {e}\n{traceback.format_exc()}")
-            self.errors_count += 1
             had_error = True
+
+        if had_error:
+            self.errors_count += 1
 
         return packets_in_file, had_error
 
@@ -435,9 +585,7 @@ class TsdbMigration(Microservice):
         self.state = "STARTING"
 
         try:
-            # Connect to QuestDB
-            self.questdb.connect_ingest()
-            self.questdb.connect_query()
+            # QuestDB connections are opened lazily per db_shard as targets are encountered
 
             # Load current target/packet definitions
             self._load_valid_targets_packets()
@@ -503,12 +651,12 @@ class TsdbMigration(Microservice):
             self.state = "ERROR"
             self.logger.error(f"Migration error: {e}\n{traceback.format_exc()}")
         finally:
-            self.questdb.close()
+            self._close_clients()
 
     def shutdown(self, state="STOPPED"):
         """Graceful shutdown."""
         self.sleeper.cancel()
-        self.questdb.close()
+        self._close_clients()
         super().shutdown(state)
 
 
