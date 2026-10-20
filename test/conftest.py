@@ -10,12 +10,11 @@
 # if purchased from OpenC3, Inc.
 
 """
-Pytest fixtures for QuestDB integration tests.
+Pytest configuration and fixtures.
 
-Usage:
-    1. Start QuestDB: docker compose -f docker-compose.test.yml up -d
-    2. Run tests: pytest tests/test_questdb_integration.py -v
-    3. Stop QuestDB: docker compose -f docker-compose.test.yml down
+The unit tests run with `just test` and need neither QuestDB nor a running COSMOS.
+The QuestDB fixtures below are only used by tests marked with `requires_questdb`,
+which skip themselves when no QuestDB is reachable at OPENC3_TSDB_HOSTNAME.
 """
 
 import os
@@ -24,13 +23,11 @@ import time
 
 import pytest
 
-# Add parent directory to path for imports
+# Add the microservice directory to the path so its modules import by bare name,
+# the same way they do when COSMOS runs them. openc3 itself comes from the pinned
+# dev dependency (see pyproject.toml), not from a sibling checkout.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "microservices", "TSDB_MIGRATION"))
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "cosmos", "openc3", "python"),
-)
 
 # Set environment variables for QuestDB connection (test defaults)
 os.environ.setdefault("OPENC3_TSDB_HOSTNAME", "127.0.0.1")

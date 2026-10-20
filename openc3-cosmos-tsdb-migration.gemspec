@@ -19,12 +19,12 @@ Gem::Specification.new do |s|
   s.license = 'OpenC3'
   s.authors = ['Jason Thomas']
   s.email = ['support@openc3.com']
-  s.homepage = 'https://github.com/OpenC3/cosmos-enterprise-plugins/tree/main/openc3-cosmos-tsdb-migration#readme'
+  s.homepage = 'https://github.com/OpenC3/openc3-cosmos-tsdb-migration#readme'
   s.platform = Gem::Platform::RUBY
   s.required_ruby_version = '>= 3.0'
   s.metadata = {
     'openc3_store_keywords' => 'tsdb,migration,questdb',
-    'source_code_uri' => 'https://github.com/OpenC3/cosmos-enterprise-plugins/tree/main/openc3-cosmos-tsdb-migration',
+    'source_code_uri' => 'https://github.com/OpenC3/openc3-cosmos-tsdb-migration',
     'openc3_store_access_type' => 'public',
     'openc3_cosmos_minimum_version' => '7.0.0'
   }
