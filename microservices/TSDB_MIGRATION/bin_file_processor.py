@@ -21,7 +21,7 @@ import gzip
 import os
 import tempfile
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 
 from openc3.logs.packet_log_reader import PacketLogReader
 from openc3.packets.json_packet import JsonPacket
@@ -129,7 +129,9 @@ def extract_timestamp_from_filename(filename: str) -> int:
         second = int(timestamp_str[12:14])
         millisecond = int(timestamp_str[14:17])
 
-        dt = datetime(year, month, day, hour, minute, second, millisecond * 1000)
+        # Log filenames are UTC. Without an explicit tzinfo the naive datetime is
+        # interpreted as local time, which shifts sort order across a DST boundary.
+        dt = datetime(year, month, day, hour, minute, second, millisecond * 1000, tzinfo=UTC)
         # Convert to nanoseconds
         return int(dt.timestamp() * 1_000_000_000)
     except (ValueError, IndexError):
