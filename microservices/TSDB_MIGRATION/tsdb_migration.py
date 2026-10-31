@@ -31,6 +31,7 @@ import gzip
 import json
 import os
 import re
+import time
 import traceback
 from datetime import UTC, datetime
 
@@ -71,6 +72,51 @@ def configure_log_level(logger, log_level: str) -> None:
         raise ValueError(
             f"Invalid LOG_LEVEL {log_level!r}; expected one of: {valid_values}"
         ) from error
+
+
+def format_bytes(num_bytes: float) -> str:
+    """Format a byte count using binary units (matches du -h)."""
+    if num_bytes < 1024:
+        return f"{int(num_bytes)} B"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        num_bytes /= 1024
+        if num_bytes < 1024 or unit == "TiB":
+            break
+    return f"{num_bytes:.1f} {unit}"
+
+
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds as e.g. '1d 2h 3m' or '45s'."""
+    seconds = int(seconds)
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def format_progress(
+    done_bytes: int, total_bytes: int, run_bytes: int, elapsed_seconds: float
+) -> str:
+    """
+    Build a progress summary based on bucket object sizes.
+
+    done_bytes/total_bytes include files completed by previous runs so the percentage
+    reflects the whole migration. run_bytes is what this run has completed and is used
+    with elapsed_seconds to estimate the remaining time.
+    """
+    percent = 100.0 if total_bytes <= 0 else min(100.0, done_bytes * 100.0 / total_bytes)
+    summary = f"{percent:.2f}% ({format_bytes(done_bytes)} / {format_bytes(total_bytes)})"
+    remaining_bytes = total_bytes - done_bytes
+    if remaining_bytes > 0 and run_bytes > 0 and elapsed_seconds > 0:
+        rate = run_bytes / elapsed_seconds
+        summary += f", ETA {format_duration(remaining_bytes / rate)}"
+    return summary
 
 
 class TsdbMigration(Microservice):
@@ -135,6 +181,9 @@ class TsdbMigration(Microservice):
         self.files_processed = 0
         self.packets_ingested = 0
         self.errors_count = 0
+
+        # Bucket object sizes from the file listing, used for percent done
+        self._file_sizes = {}  # {file_path: size_in_bytes}
 
         # Track which table schemas have been loaded for column type tracking
         self._loaded_schemas = set()
@@ -297,14 +346,15 @@ class TsdbMigration(Microservice):
             return packet_name in self.valid_cmd_packets.get(target_name, set())
         return packet_name in self.valid_tlm_packets.get(target_name, set())
 
-    def _list_files_recursive(self, bucket: str, prefix: str) -> list:
-        """Recursively list all files under a prefix."""
+    def _list_files_recursive(self, bucket: str, prefix: str, log_files: bool = True) -> list:
+        """Recursively list all files under a prefix, recording sizes in self._file_sizes."""
         all_files = []
         dirs_to_process = [prefix]
 
         while dirs_to_process:
             current_prefix = dirs_to_process.pop(0)
-            self.logger.info(f"Listing files under: {current_prefix}")
+            if log_files:
+                self.logger.info(f"Listing files under: {current_prefix}")
             try:
                 dir_list, file_list = self.bucket.list_files(bucket=bucket, path=current_prefix)
 
@@ -315,13 +365,18 @@ class TsdbMigration(Microservice):
 
                 # Add files (file_list contains dicts with 'name' key or strings)
                 for file_info in file_list:
+                    size = 0
                     if isinstance(file_info, dict):
                         filename = file_info.get("name", "")
+                        size = file_info.get("size") or 0
                     else:
                         filename = file_info
                     if filename:
-                        self.logger.info(f"found file: {current_prefix}{filename}")
-                        all_files.append(f"{current_prefix}{filename}")
+                        file_path = f"{current_prefix}{filename}"
+                        if log_files:
+                            self.logger.info(f"found file: {file_path}")
+                        self._file_sizes[file_path] = size
+                        all_files.append(file_path)
 
             except Exception as e:
                 self.logger.debug(f"Error listing {current_prefix}: {e}")
@@ -360,6 +415,24 @@ class TsdbMigration(Microservice):
 
         self.logger.info(f"Found {len(files)} decom log files to process")
         return files
+
+    def _completed_bytes_from_previous_runs(self) -> int:
+        """
+        Sum the sizes of files already moved to processed/ or error/ by earlier runs.
+
+        This is a single listing at startup (no per-file requests) so that the percent
+        done reflects the whole migration rather than just this run.
+        """
+        logs_bucket = os.environ.get("OPENC3_LOGS_BUCKET", "logs")
+        total = 0
+        for folder in ("processed", "error"):
+            prefix = f"{self.scope}/{folder}/decom_logs/"
+            try:
+                for file_path in self._list_files_recursive(logs_bucket, prefix, log_files=False):
+                    total += self._file_sizes.pop(file_path, 0)
+            except Exception as e:
+                self.logger.debug(f"Could not size {prefix}: {e}")
+        return total
 
     def _download_file(self, bucket_path: str) -> bytes:
         """Download a file from the bucket and return its contents."""
@@ -605,6 +678,15 @@ class TsdbMigration(Microservice):
             files = [f for f in files if self._should_process_file(f)]
             self.logger.info(f"After filtering: {len(files)} files to process")
 
+            # Percent done is by bytes (bucket object sizes) since file sizes vary widely
+            done_bytes = self._completed_bytes_from_previous_runs()
+            total_bytes = done_bytes + sum(self._file_sizes.get(f, 0) for f in files)
+            run_bytes = 0
+            run_start = time.monotonic()
+            self.logger.info(
+                f"Migration progress: {format_progress(done_bytes, total_bytes, 0, 0)}"
+            )
+
             # Process files
             files_since_pause = 0
             total_files = len(files)
@@ -623,6 +705,12 @@ class TsdbMigration(Microservice):
                     break
                 self.files_processed += 1
                 files_since_pause += 1
+                file_bytes = self._file_sizes.get(file_path, 0)
+                done_bytes += file_bytes
+                run_bytes += file_bytes
+                progress = format_progress(
+                    done_bytes, total_bytes, run_bytes, time.monotonic() - run_start
+                )
 
                 # Move to appropriate folder based on success/failure
                 if had_error:
@@ -634,6 +722,9 @@ class TsdbMigration(Microservice):
                     f"Completed: {file_path} - {packets} packets "
                     f"(total: {self.packets_ingested} packets, {self.files_processed} files)"
                     f"{' (WITH ERRORS)' if had_error else ''}"
+                )
+                self.logger.info(
+                    f"Migration progress: {progress}, file {idx + 1}/{total_files} this run"
                 )
 
                 # Periodic pause to let operational system catch up
